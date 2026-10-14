@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow,noarchive"><meta name="referrer" content="no-referrer"><title>文件查看</title>
+<style>
+html,body{height:100%;margin:0;background:#173b43;color:#fff;font:15px/1.7 "Microsoft YaHei","PingFang SC",system-ui,sans-serif}
+#box{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);width:min(520px,calc(100vw - 48px))}
+h1{font-size:22px;font-weight:600;margin:0 0 10px}p{margin:6px 0}.s{font-size:12.5px;opacity:.72;margin-top:16px}
+#bar{height:6px;background:#ffffff2e;border-radius:3px;overflow:hidden;margin:14px 0 6px}#bar i{display:block;height:100%;width:0;background:#dbb36b;transition:width .15s}
+form{display:flex;gap:8px;margin-top:14px}#pf{flex-wrap:wrap}#who{display:flex;gap:8px;flex:0 0 100%}input{flex:1;min-width:0;padding:9px 11px;border-radius:6px;border:1px solid #ffffff55;background:#ffffff14;color:#fff;font:inherit}
+button{padding:9px 18px;border-radius:6px;border:0;background:#dbb36b;color:#173b43;font:inherit;font-weight:600;cursor:pointer}
+.err{color:#ffd0cc}[hidden]{display:none!important}
+</style></head><body>
+<div id="box"><h1 id="h">正在打开</h1><p id="msg">请稍候。</p><div id="bar"><i id="barI"></i></div>
+<form id="f" hidden><input id="code" autocomplete="off" spellcheck="false" placeholder="把收到的完整链接粘贴到这里"><button>打开</button></form>
+<form id="pf" hidden><div id="who" hidden><input id="wc" autocomplete="organization" spellcheck="false" maxlength="80" placeholder="公司名称 Company"><input id="wn" autocomplete="name" spellcheck="false" maxlength="60" placeholder="姓名 Name"></div><input id="pw" autocomplete="off" spellcheck="false" placeholder="访问密码 Password"><button>确定</button></form>
+<form id="rf" hidden><button>重试</button></form>
+<p class="s">请用电脑上的 Edge 或 Chrome 打开。第一次打开要下载约 7 兆，照片和全景按点开的位置继续下载。链接里带有访问码，请不要转发给无关的人。<span id="note"></span></p></div>
+<script>setTimeout(function () { if (!window.__sv) { document.getElementById('h').textContent = '没有打开'; document.getElementById('msg').textContent = '这个浏览器太旧，或者处在兼容模式，打不开。请用电脑上新版的 Edge 或 Chrome；360、QQ 等浏览器请切到“极速模式”。'; document.getElementById('bar').style.display = 'none' } }, 1500)</script>
+<script>
+// 入口页：从链接“#”后面取访问码，下载密文；再问访问密码；两样合起来才能在浏览器里解开，然后把页面展开。
+// 访问码和密码都不会发给任何服务器（“#”后面的内容浏览器不上传；密码只在本机参与计算）。
+(function () {
+  window.__sv = 1
+  var BEAT = 90000                                        // 服务器核对的限时链接：开着的页面每隔这么久（毫秒）问一次登记端，被停用、到期或设备对不上就收起
+  var STALL = 30000                                       // 下载停住超过这么久（毫秒）就算网络不通，给“重试”
+  var STAT = "https://s.guoyiming.com/e"                                   // 访问记录的接收地址（打包时填；空着就不记）。只发“点开了、到了密码框、密码对了、密码错了”这类事件，不带访问码、密码和网址
+  var $ = function (id) { return document.getElementById(id) }
+  function say(t, err) { $('msg').textContent = t; $('msg').className = err ? 'err' : '' }
+  function bar(k) { $('barI').style.width = Math.round(Math.max(0, Math.min(1, k)) * 100) + '%' }
+  function b64u(s) { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; var b = atob(s), u = new Uint8Array(b.length); for (var i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u }
+  function tob64u(u) { var s = ''; for (var i = 0; i < u.length; i++) s += String.fromCharCode(u[i]); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') }
+  function parse(t) { var m = /([0-9a-f]{8})\.([A-Za-z0-9_-]{43})(?![A-Za-z0-9_-])/.exec(t || ''); return m ? { pid: m[1], key: m[2] } : null }
+  function show(which) { $('f').hidden = which !== 'f'; $('pf').hidden = which !== 'pf'; $('rf').hidden = which !== 'rf'; $('bar').hidden = which !== 'bar' }
+  function ask(t) { $('h').textContent = '需要访问链接'; say(t, true); bar(0); show('f'); $('code').focus() }
+  function retry(t) { $('h').textContent = '没有打开'; say(t, true); bar(0); show('rf') }
+  function dead(t, title) { $('h').textContent = title || '授权已到期'; say(t, true); bar(0); show('none'); try { if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ t: 'wipe' }) } catch (e) { } }   // 顺手让素材通道把本机存的照片钥匙删掉
+  var OTHER = '这条链接只能在第一次打开它的那台电脑、那个浏览器里使用，不能转给别人，也不能换设备或换浏览器。需要在别处查看，请联系发链接的人。'
+  function when(t) { try { return new Date(t).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZoneName: 'short' }) } catch (e) { return String(new Date(t)) } }
+  var GATE = STAT ? STAT.replace(/\/e$/, '/k') : ''         // 限时链接里“要服务器核对”的那一种，到这里取钥匙的一段；到期或被停用就取不到
+  if (STAT) $('note').textContent = '为核对授权，打开记录会被保存 180 天：时间、所用的链接、网络地址和大致所在地、网络运营方、浏览器和设备信息、设备时区、本浏览器的一个随机编号；只有发出链接的人能看到。'
+
+  var vid = ''; try { vid = localStorage.getItem('sv_v') || ''; if (!/^[0-9a-f]{16}$/.test(vid)) { var r8 = crypto.getRandomValues(new Uint8Array(8)); vid = ''; for (var i = 0; i < 8; i++) vid += r8[i].toString(16).padStart(2, '0'); localStorage.setItem('sv_v', vid) } } catch (e) { }
+  var dvr = ''; try { dvr = localStorage.getItem('sv_d') || ''; if (!/^[0-9a-f]{64}$/.test(dvr)) { var r32 = crypto.getRandomValues(new Uint8Array(32)); dvr = ''; for (var i2 = 0; i2 < 32; i2++) dvr += r32[i2].toString(16).padStart(2, '0'); localStorage.setItem('sv_d', dvr) } } catch (e) { }
+  if (!dvr) { var r33 = crypto.getRandomValues(new Uint8Array(32)); for (var i3 = 0; i3 < 32; i3++) dvr += r33[i3].toString(16).padStart(2, '0') }       // 浏览器不让存（无痕窗口等）：每次打开都算一台新设备
+  var keep = false; try { keep = localStorage.getItem('sv_d') === dvr } catch (e) { }                // 这个浏览器存不存得住设备编号（存不住的话，一刷新就成了“另一台设备”）
+  async function bindOf(c, pk) { return tob64u(await sha(cat(cat(b64u(c.key), pk), new TextEncoder().encode('bind')))) }   // 向登记端证明“我知道访问密码”：访问码和拉伸过的密码一起取摘要，密码本身不出本机
+  async function devOf(pid) { var u = await sha(new TextEncoder().encode(dvr + '|' + pid)), s = ''; for (var i = 0; i < 16; i++) s += u[i].toString(16).padStart(2, '0'); return s }   // 这台设备在这条链接名下的编号（每条链接不同，原始编号不出本机）
+  async function proof(c) { return tob64u(await sha(cat(b64u(c.key), new TextEncoder().encode('gate')))) }                                              // 向登记端证明“我手里有这条链接”
+  function stat(ev, pid, again, who) {                     // 记一笔：事件、页面编号、本浏览器的随机编号、设备时区；限时链接再带上对方填的公司和姓名。发不出去就算了，不影响打开
+    if (!STAT) return
+    try { var z = ''; try { z = (Intl.DateTimeFormat().resolvedOptions().timeZone || '').slice(0, 40) } catch (e) { }
+      fetch(STAT, { method: 'POST', mode: 'cors', credentials: 'omit', keepalive: true, referrerPolicy: 'no-referrer', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(who ? { e: ev, p: pid || '', v: vid, z: z, s: again ? 1 : 0, c: who.c, n: who.n } : { e: ev, p: pid || '', v: vid, z: z, s: again ? 1 : 0 }) }).catch(function () { }) } catch (e) { }
+  }
+
+  async function gate(c, probe, who, again, pv) {              // probe：只问一声还有没有效，不取钥匙、不留记录；否则取钥匙的一段（登记端核对后记一笔“取到授权”）
+    if (!GATE) throw new Error('gnet')
+    var h = await proof(c), d = await devOf(c.pid), z = '', ac = new AbortController(), tm = setTimeout(function () { ac.abort() }, 20000), r
+    try { z = (Intl.DateTimeFormat().resolvedOptions().timeZone || '').slice(0, 40) } catch (e) { }
+    try { r = await fetch(GATE, { method: 'POST', mode: 'cors', credentials: 'omit', referrerPolicy: 'no-referrer', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ g: c.pid, h: h, d: d, v: vid, z: z, q: probe ? 1 : 0, s: again ? 1 : 0, c: who ? who.c : '', n: who ? who.n : '', pv: pv || '' }), signal: ac.signal }) } catch (e) { throw new Error('gnet') } finally { clearTimeout(tm) }
+    if (r.status === 410) throw new Error('exp'); if (r.status === 409) throw new Error('dev'); if (r.status === 401) throw new Error('pw'); if (r.status === 403) throw new Error('key'); if (!r.ok) throw new Error('gnet')
+    var j; try { j = await r.json() } catch (e) { throw new Error('gnet') } if (!j || (!probe && typeof j.s !== 'string')) throw new Error('gnet')
+    return { share: probe ? null : b64u(j.s), now: +j.now || 0, lim: +j.m || 0 }
+  }
+
+  // 照片和视频也是密文，由 sw.js 在浏览器里边取边解；这里把素材的钥匙交给它，等它接管本页以后再展开页面
+  async function assets(ak, exp) {
+    if (!('serviceWorker' in navigator)) return false
+    var reg = await navigator.serviceWorker.register('sw.js'); await Promise.race([navigator.serviceWorker.ready, new Promise(function (res) { setTimeout(res, 12000) })])
+    if (!navigator.serviceWorker.controller) await new Promise(function (res) { navigator.serviceWorker.addEventListener('controllerchange', res, { once: true }); setTimeout(res, 4000) })
+    var sw = navigator.serviceWorker.controller || reg.active; if (!sw) return false
+    await new Promise(function (res, rej) { var ch = new MessageChannel(); ch.port1.onmessage = function () { res() }; sw.postMessage({ t: 'key', ak: ak, exp: exp || 0 }, [ch.port2]); setTimeout(function () { rej(new Error('sw')) }, 6000) })
+    if (!navigator.serviceWorker.controller) {                       // 强制刷新（Ctrl+F5）打开时本页不归 sw 管，照片会取不到：自动正常刷新一次
+      if (!sessionStorage.getItem('sv_r')) { sessionStorage.setItem('sv_r', '1'); location.reload(); await new Promise(function () { }) }
+      return false
+    }
+    sessionStorage.removeItem('sv_r'); return true
+  }
+
+  // 密文格式有两种。通用链接：'P2' + 盐 16 + 迭代次数 4 + 访问码校验（随机数 12 + 校验 16）+ 随机数 12 + 密文。
+  // 限时链接：'P3' + 标志 1 + 到期时间 8 + 盐 16 + 迭代次数 4 + 访问码校验 28 + 随机数 12 + 密文；开头 11 个字节参加校验，改了到期时间就解不开。
+  // 解密钥匙 = SHA-256(链接里的访问码 ‖ PBKDF2(访问密码, 盐) [‖ 登记端发的一段])：缺一样都解不开。
+  function header(buf) {
+    if (buf.length < 100 || buf[0] !== 0x50) return null; var dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength)
+    if (buf[1] === 0x32) return { gate: false, who: false, exp: 0, aad: null, salt: buf.subarray(2, 18), iter: dv.getUint32(18), civ: buf.subarray(22, 34), ctag: buf.subarray(34, 50), iv: buf.subarray(50, 62), body: buf.subarray(62) }
+    if (buf[1] === 0x33) return { gate: !!(buf[2] & 1), who: !!(buf[2] & 2), exp: dv.getUint32(3) * 4294967296 + dv.getUint32(7), aad: buf.subarray(0, 11), salt: buf.subarray(11, 27), iter: dv.getUint32(27), civ: buf.subarray(31, 43), ctag: buf.subarray(43, 59), iv: buf.subarray(59, 71), body: buf.subarray(71) }
+    return null
+  }
+  async function sha(u) { return new Uint8Array(await crypto.subtle.digest('SHA-256', u)) }
+  function cat(a, b) { var u = new Uint8Array(a.length + b.length); u.set(a, 0); u.set(b, a.length); return u }
+  async function linkOk(c, hd) {                             // 先单独验访问码：链接抄错了就直接说，不用让人白输一遍密码
+    try { var k = await crypto.subtle.importKey('raw', await sha(cat(b64u(c.key), new TextEncoder().encode('chk'))), 'AES-GCM', false, ['decrypt']); await crypto.subtle.decrypt({ name: 'AES-GCM', iv: hd.civ }, k, hd.ctag); return true } catch (e) { return false }
+  }
+  async function stretch(pw, hd) {                           // 访问密码 → 32 字节（故意算得慢，一般一秒以内，旧电脑两三秒）
+    var norm = pw.normalize('NFKC').replace(/[\s\p{Cf}]+/gu, '')             // 全角半角、空格、复制时带进来的看不见的字符都不算数
+    var k = await crypto.subtle.importKey('raw', new TextEncoder().encode(norm), 'PBKDF2', false, ['deriveBits'])
+    return new Uint8Array(await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: hd.salt, iterations: hd.iter, hash: 'SHA-256' }, k, 256))
+  }
+  async function unlock(c, hd, pk) {                         // 几样合起来解；解不开就抛错
+    var mat = cat(b64u(c.key), pk); if (hd.gate) mat = cat(mat, hd.share)
+    var key = await crypto.subtle.importKey('raw', await sha(mat), 'AES-GCM', false, ['decrypt']), alg = { name: 'AES-GCM', iv: hd.iv }; if (hd.aad) alg.additionalData = hd.aad
+    return new Uint8Array(await crypto.subtle.decrypt(alg, key, hd.body))
+  }
+  async function expand(plain, hd) {
+    var left = hd && hd.left ? hd.left - Math.max(performance.now() - hd.t0, Date.now() - hd.d0) : 0                          // 限时链接还剩多少毫秒（从打开那一刻按服务器时间算起）
+    if (hd && hd.left && left <= 0) { stat('expired', cur ? cur.c.pid : ''); return dead('这条链接的授权已经到期。需要继续查看，请联系发链接的人。') }
+    var n = new DataView(plain.buffer, plain.byteOffset, 4).getUint32(0), meta = JSON.parse(new TextDecoder().decode(plain.subarray(4, 4 + n)))
+    show('bar'); $('h').textContent = '正在打开'; say('正在准备图片……'); bar(.96); var ok = false; try { ok = await assets(meta.ak, left ? Date.now() + left : 0) } catch (e) { ok = false }
+    say('正在展开……'); bar(1)
+    var html = await new Response(new Blob([plain.subarray(4 + n)]).stream().pipeThrough(new DecompressionStream('gzip'))).text()
+    if (!ok) html = html.replace('<body>', '<body><div style="position:fixed;left:50%;bottom:8px;transform:translateX(-50%);z-index:99;background:#102a30f2;color:#fff;padding:6px 14px;border-radius:6px;font:13px Microsoft YaHei,sans-serif">这个浏览器窗口取不到图片和视频，其余内容不受影响；要看图片请换电脑上 Edge 或 Chrome 的普通窗口。</div>')
+    if (hd && hd.left) { left = hd.left - Math.max(performance.now() - hd.t0, Date.now() - hd.d0); if (left <= 0) { stat('expired', cur ? cur.c.pid : ''); return dead('这条链接的授权已经到期。需要继续查看，请联系发链接的人。') } }   // 准备图片花了一会儿，剩余时间重算一次
+    var beat = ''                                                                                    // 服务器核对的链接：开着的页面定时问登记端，被停用、到期或设备对不上就刷新（回到入口页会显示原因）
+    if (hd && hd.gate && GATE && cur) { var hp = JSON.stringify({ g: cur.c.pid, h: await proof(cur.c), d: await devOf(cur.c.pid), v: vid, z: '', q: 2 }); beat = 'setInterval(function(){fetch(' + JSON.stringify(GATE) + ',{method:"POST",mode:"cors",credentials:"omit",referrerPolicy:"no-referrer",headers:{"Content-Type":"text/plain"},body:' + JSON.stringify(hp).replace(/</g, '\\u003c') + '}).then(function(r){if(r.status===409||r.status===410)location.reload()}).catch(function(){})},' + BEAT + ');' }
+    if (left || beat) html = html.replace('<body>', '<body><script>(function(){' + (left ? 'var L=' + Math.floor(left) + ',e=Date.now()+L,t=performance.now();function k(){if(Date.now()>=e||performance.now()-t>=L)location.reload()}setInterval(k,5000);document.addEventListener("visibilitychange",k);' : '') + beat + '})()<\/script>')      // 到点自动刷新，回到入口页显示“授权已到期”
+    document.open(); document.write(html); document.close()
+  }
+
+  var cur = null, last = null                                // 当前这次打开：{c 访问码, hd 密文头}；last 是最近一次试的访问码（重试用）
+  async function open(c) {
+    show('bar'); $('h').textContent = '正在打开'; cur = null; last = c; var timer = 0
+    try {
+      if (!window.crypto || !crypto.subtle || typeof DecompressionStream === 'undefined') throw new Error('old')
+      var saved = null; try { saved = sessionStorage.getItem('sv_p:' + c.pid) } catch (e) { }       // 同一个窗口里刷新，不用再输一遍密码
+      if (!saved) stat('hit', c.pid)                                                             // 点开了链接：先记一笔，后面下载不下来、中途关掉也有据可查
+      var ac = new AbortController(), tick = function () { clearTimeout(timer); timer = setTimeout(function () { ac.abort() }, STALL) }
+      say('正在下载……'); tick(); var r = await fetch('d/' + c.pid + '.bin', { cache: 'no-cache', signal: ac.signal }), tR = performance.now(), dR = Date.now(); if (!r.ok) { if (r.status === 404) { stat('badlink', c.pid); throw new Error('nf') } throw new Error('net') }
+      var total = +r.headers.get('content-length') || 0, rd = r.body.getReader(), parts = [], got = 0
+      for (; ;) { tick(); var x = await rd.read(); if (x.done) break; parts.push(x.value); got += x.value.length; if (total) { bar(got / total * .9); say('正在下载……' + (got / 1048576).toFixed(1) + ' / ' + (total / 1048576).toFixed(1) + ' MB') } }
+      clearTimeout(timer); var buf = new Uint8Array(got), o = 0; for (var i = 0; i < parts.length; i++) { buf.set(parts[i], o); o += parts[i].length }
+      var hd = header(buf); if (!hd) { stat('badlink', c.pid); throw new Error('nf') }
+      if (!(await linkOk(c, hd))) { stat('badlink', c.pid); throw new Error('key') }
+      var now = Date.parse(r.headers.get('date') || '') || Date.now()                              // 到期与否按服务器的时间算，改本机的钟没有用
+      if (hd.exp && now >= hd.exp) { stat('expired', c.pid); throw new Error('exp') }
+      if (hd.gate) { say('正在核对授权……'); var g = await gate(c, true); hd.lim = g.lim; if (g.now) { now = g.now; tR = performance.now(); dR = Date.now() } if (hd.exp && now >= hd.exp) throw new Error('exp') }
+      hd.left = hd.exp ? hd.exp - now : 0; hd.t0 = tR; hd.d0 = dR                                    // 剩余时间从“服务器报时的那一刻”起算；两个钟都记着，电脑休眠或改钟都不会多给时间
+      cur = { c: c, hd: hd }
+      if (saved) {
+        var plain = null, w = null; try { w = JSON.parse(sessionStorage.getItem('sv_w:' + c.pid) || 'null') } catch (e) { }
+        try { if (hd.gate) hd.share = (await gate(c, false, w, true, await bindOf(c, b64u(saved)))).share; plain = await unlock(c, hd, b64u(saved)) } catch (e) { if (e && (e.message === 'exp' || e.message === 'gnet' || e.message === 'dev')) throw e; hd.share = null; try { sessionStorage.removeItem('sv_p:' + c.pid) } catch (e2) { } }
+        if (plain) { stat('ok', c.pid, true, w); return await expand(plain, hd) }
+      }
+      stat('view', c.pid)
+      $('who').hidden = !hd.who; if (hd.who) { try { var w0 = JSON.parse(localStorage.getItem('sv_w:' + c.pid) || 'null'); if (w0 && !$('wc').value && !$('wn').value) { $('wc').value = w0.c || ''; $('wn').value = w0.n || '' } } catch (e) { } }
+      $('h').textContent = hd.who ? '请填写后打开' : '请输入访问密码'
+      say((hd.who ? '请填写公司名称和姓名，再输入访问密码。填写的内容会连同打开记录一起保存。' : '这份资料需要访问密码。') + (hd.exp ? '这条链接的授权到 ' + when(hd.exp) + ' 为止。' : '')); bar(.92); show('pf'); $('pw').value = ''; (hd.who && !$('wc').value ? $('wc') : hd.who && !$('wn').value ? $('wn') : $('pw')).focus()
+    } catch (e) {
+      clearTimeout(timer); var m = e && e.message
+      if (m === 'nf') ask('没有找到对应的内容，链接可能不完整、已经停用或已经到期。')
+      else if (m === 'key') ask('访问码不对，或者链接不完整。请向发链接的人核对。')
+      else if (m === 'old') dead('这个浏览器太旧，打不开。请用电脑上新版的 Edge 或 Chrome。', '没有打开')
+      else if (m === 'exp') dead('这条链接的授权已经到期或被停用。需要继续查看，请联系发链接的人。')
+      else if (m === 'dev') dead(OTHER, '这台设备打不开')
+      else if (m === 'gnet') retry('连不上授权服务：这条链接要先联网核对授权才能打开。请检查网络后点“重试”；如果所在的网络访问不了国际网站，请联系发链接的人换一种链接。')
+      else retry('没有下载下来：网络太慢、中断，或者这个网络打不开本站。请检查网络后点“重试”。')
+    }
+  }
+  var checking = false
+  $('pf').addEventListener('submit', async function (ev) {
+    ev.preventDefault(); if (!cur || checking) return; var pw = $('pw').value, w = null, pid = cur.c.pid
+    if (cur.hd.who) { var real = /[\p{L}\p{N}]/u; w = { c: $('wc').value.replace(/[\s\p{Cf}]+/gu, ' ').trim().slice(0, 80), n: $('wn').value.replace(/[\s\p{Cf}]+/gu, ' ').trim().slice(0, 60) }; if (!real.test(w.c) || !real.test(w.n)) { say('请先填写公司名称和姓名。', true); (real.test(w.c) ? $('wn') : $('wc')).focus(); return } }
+    if (!pw.replace(/\s+/g, '')) { if (cur.hd.who) { say('请输入访问密码。', true); $('pw').focus() } return }
+    if (cur.hd.gate && cur.hd.lim && !cur.hd.share) {                                                  // 只认第一台设备的链接：输对密码就会占名额，先把两种容易后悔的情形拦一下
+      if (!keep) { say('这个浏览器窗口不保存数据（比如无痕窗口），而这条链接只认第一次打开它的设备。请换成普通窗口再打开。', true); return }
+      if (!cur.warned && /MicroMessenger|WeChat|Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)) { cur.warned = true; say('提醒：这条链接只认第一次打开它的设备和浏览器。现在是手机或应用内置的浏览器；想在电脑上看，请不要在这里继续，把链接复制到电脑的 Edge 或 Chrome 里打开。确定就在这里看，请再点一次“确定”。', true); return }
+    }
+    checking = true; say('正在验证……')
+    try {
+      if (cur.hd.gate && cur.hd.share) await gate(cur.c, true)                                         // 钥匙是早先取的：提交前再问一次登记端，中途被停用、到期或设备对不上就不往下走
+      var pk = await stretch(pw, cur.hd), plain = null
+      if (cur.hd.gate && !cur.hd.share) cur.hd.share = (await gate(cur.c, false, w, false, await bindOf(cur.c, pk))).share              // 填完才取钥匙：登记端那条“取到授权”的记录里带着公司和姓名
+      try { plain = await unlock(cur.c, cur.hd, pk) } catch (e) { plain = null }
+      if (!plain) { if (!cur.hd.gate) stat('bad', pid, false, w); say('访问密码不对，请重新输入。', true); $('pw').select() }          // 服务器核对的链接，密码输错由登记端记，这里不重复记
+      else { try { sessionStorage.setItem('sv_p:' + pid, tob64u(pk)); if (w) { sessionStorage.setItem('sv_w:' + pid, JSON.stringify(w)); localStorage.setItem('sv_w:' + pid, JSON.stringify(w)) } } catch (e) { } stat('ok', pid, false, w); await expand(plain, cur.hd) }
+    } catch (e) {
+      var m = e && e.message
+      if (m === 'exp') dead('这条链接的授权已经到期或被停用。需要继续查看，请联系发链接的人。'); else if (m === 'dev') dead(OTHER, '这台设备打不开'); else if (m === 'pw') { say('访问密码不对，请重新输入。', true); $('pw').select() } else if (m === 'gnet') say('连不上授权服务，请检查网络后再点“确定”。', true); else if (m === 'key') say('链接不对，请向发链接的人核对。', true); else say('打开失败，请刷新后重试。', true)
+    }
+    checking = false
+  })
+  var busy = false, go = function (c) { if (busy) return; busy = true; open(c).finally(function () { busy = false }) }
+  $('f').addEventListener('submit', function (ev) { ev.preventDefault(); var c = parse($('code').value); if (c) { try { history.replaceState(null, '', '#' + c.pid + '.' + c.key) } catch (e) { } go(c) } else ask('没有认出访问码。请粘贴完整的链接（“#”后面那一长串也要带上）。') })
+  $('rf').addEventListener('submit', function (ev) { ev.preventDefault(); if (last) go(last) })
+  addEventListener('hashchange', function () { var c = parse(location.hash); if (c) go(c) })       // 已经停在入口页上，又在地址栏里贴了完整链接：不用刷新也能打开
+  var c = parse(location.hash); if (c) go(c); else { stat('nolink', ''); ask('这个页面需要带访问码的完整链接才能打开。') }
+})()
+</script></body></html>
